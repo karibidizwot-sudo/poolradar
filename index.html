@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoolRadar — горячие LP-пулы BSC</title>
+<meta name="description" content="Живой скринер горячих пулов ликвидности на BSC: живой yield, LVR-скор, возраст пула, наличие перпа для хеджа.">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#0d0f16;--card:#161925;--line:#232838;--fg:#e6e8f0;--dim:#7d84a0;
+--green:#3ddc84;--red:#ff5d6c;--amber:#ffb545;--acc:#4fa3ff;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;padding:0 0 40px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+header{padding:34px 0 22px;border-bottom:1px solid var(--line);margin-bottom:24px;background:radial-gradient(1200px 220px at 50% -60px,rgba(79,163,255,.10),transparent)}
+.toprow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:12px}
+.radar{width:34px;height:34px;border-radius:50%;position:relative;flex:none;background:conic-gradient(from 0deg,rgba(61,220,132,.0),rgba(61,220,132,.55));box-shadow:0 0 0 2px var(--line) inset;animation:spin 3.4s linear infinite}
+.radar::after{content:'';position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,rgba(61,220,132,.18) 0 22%,transparent 24%)}
+@keyframes spin{to{transform:rotate(360deg)}}
+h1{font-size:26px;font-weight:700}h1 span.g{color:var(--green)}
+.tag{color:var(--dim);font-size:14.5px;margin-top:6px;max-width:680px;line-height:1.5}
+.stats{display:flex;gap:26px;margin-top:20px;flex-wrap:wrap}
+.stat b{font-size:22px;font-weight:700}.stat .k{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-top:2px}
+.green{color:var(--green)}.amber{color:var(--amber)}.acc{color:var(--acc)}.dim{color:var(--dim)}
+.live{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);margin-left:auto}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,220,132,.5)}70%{box-shadow:0 0 0 7px rgba(61,220,132,0)}100%{box-shadow:0 0 0 0 rgba(61,220,132,0)}}
+.controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.chip{background:var(--card);border:1px solid var(--line);color:var(--dim);padding:8px 14px;border-radius:999px;font-size:13px;cursor:pointer;user-select:none;transition:.15s}
+.chip:hover{border-color:var(--acc);color:var(--fg)}.chip.on{background:rgba(79,163,255,.14);border-color:var(--acc);color:var(--acc)}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+th,td{padding:12px 14px;text-align:right;font-size:14px;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer;border-bottom:1px solid var(--line);background:#12151f}
+thead th:hover{color:var(--fg)}thead th .ar{opacity:.4;font-size:10px}
+tbody tr{border-bottom:1px solid rgba(35,40,56,.6);cursor:pointer}tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(79,163,255,.06)}
+.sym{font-weight:700;font-size:15px}.pair{color:var(--dim);font-weight:400;font-size:12.5px}
+.pill{display:inline-block;padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600}
+.p-uni{background:rgba(255,93,108,.16);color:#ff8a95}.p-pcs{background:rgba(255,181,69,.16);color:var(--amber)}
+.yield-hi{color:var(--green);font-weight:700}.yield-md{color:var(--amber);font-weight:600}
+.perp-y{color:var(--acc)}.perp-n{color:var(--dim)}.young{color:var(--red);font-weight:600}
+.lvr-hi{color:var(--green)}.lvr-lo{color:var(--red)}
+.foot{color:var(--dim);font-size:12.5px;margin-top:16px;line-height:1.6}.foot b{color:var(--fg)}
+.disc{color:var(--dim);font-size:11.5px;margin-top:14px;opacity:.75;line-height:1.5}
+.badge{display:inline-block;background:rgba(61,220,132,.14);color:var(--green);font-size:11px;padding:3px 9px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600}
+.empty{padding:40px;text-align:center;color:var(--dim)}
+.ov{position:fixed;inset:0;background:rgba(6,8,14,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.ov.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:16px;width:100%;max-width:560px;padding:24px;position:relative}
+.modal h2{font-size:22px}.modal .x{position:absolute;top:16px;right:18px;color:var(--dim);cursor:pointer;font-size:22px}
+.modal .x:hover{color:var(--fg)}
+.mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
+.mcell{background:#12151f;border:1px solid var(--line);border-radius:10px;padding:12px}
+.mcell .v{font-size:19px;font-weight:700}.mcell .l{color:var(--dim);font-size:11px;margin-top:3px;text-transform:uppercase;letter-spacing:.4px}
+.note{border-radius:10px;padding:12px 14px;font-size:13.5px;line-height:1.5;margin-top:6px}
+.n-good{background:rgba(61,220,132,.10);border:1px solid rgba(61,220,132,.3)}
+.n-warn{background:rgba(255,181,69,.10);border:1px solid rgba(255,181,69,.3)}
+.n-bad{background:rgba(255,93,108,.10);border:1px solid rgba(255,93,108,.3)}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<div class="toprow">
+<div class="logo"><div class="radar"></div><h1>Pool<span class="g">Radar</span> <span class="badge">BSC</span></h1></div>
+<div class="live"><span class="dot"></span><span id="live-txt">загрузка…</span></div>
+</div>
+<div class="tag">Скринер горячих пулов ликвидности на BSC. Находит пулы с живым комиссионным доходом раньше общих списков и сразу показывает качество этого дохода — по собственной методике.</div>
+<div class="stats">
+<div class="stat"><b class="green" id="s-count">—</b><div class="k">горячих пулов</div></div>
+<div class="stat"><b class="amber" id="s-top">—</b><div class="k">лучший live yield %/день</div></div>
+<div class="stat"><b class="acc" id="s-perp">—</b><div class="k">с перпом</div></div>
+<div class="stat"><b id="s-tvl">—</b><div class="k">суммарный TVL</div></div>
+</div>
+</div></header>
+<div class="wrap">
+<div class="controls">
+<div class="chip on" data-f="all">Все</div>
+<div class="chip" data-f="perp">⚡ С перпом</div>
+<div class="chip" data-f="mature">✓ Зрелые ≥24ч</div>
+<div class="chip" data-f="stable">$ Пара со стейблом</div>
+<div class="chip" data-f="safe">🛡 LVR ≥ 5</div>
+</div>
+<table id="tbl"><thead><tr>
+<th data-k="sym">Токен</th><th data-k="dex">DEX</th>
+<th data-k="l1">Live 1ч %/д <span class="ar">▼</span></th><th data-k="l6">Live 6ч %/д</th>
+<th data-k="lvr">LVR-скор</th><th data-k="tvl">TVL $</th><th data-k="age">Возраст</th>
+<th data-k="fee">Тир %</th><th data-k="perp">Перп</th>
+</tr></thead><tbody id="tb"></tbody></table>
+<div class="foot">
+<b>Как читать:</b> <b>Live yield</b> — оценка комиссионного дохода пула в %/день по собственной методике, отражающая то, что происходит прямо сейчас, а не «среднее за сутки». <b>LVR-скор</b> — наш индекс качества дохода: чем выше, тем меньше дохода съедает волатильность. Пулы младше суток помечены ⚠. <b>Перп</b> — есть ли фьючерс для хеджа.
+</div>
+<div class="disc">PoolRadar — информационный инструмент. Данные агрегируются из публичных источников (GeckoTerminal, DexScreener, MEXC) и могут содержать неточности или задержки. Это не финансовая рекомендация и не призыв к покупке. DeFi сопряжён с высоким риском полной потери средств. Проверяйте всё самостоятельно.</div>
+</div>
+<div class="ov" id="ov"><div class="modal">
+<span class="x" id="mx">✕</span><h2 id="m-sym">—</h2>
+<div class="dim" id="m-sub" style="font-size:13px;margin-top:2px"></div>
+<div class="mgrid">
+<div class="mcell"><div class="v green" id="m-l1">—</div><div class="l">Live 1ч %/д</div></div>
+<div class="mcell"><div class="v" id="m-l6">—</div><div class="l">Live 6ч %/д</div></div>
+<div class="mcell"><div class="v" id="m-lvr">—</div><div class="l">LVR-скор</div></div>
+</div>
+<canvas id="m-chart" height="150"></canvas>
+<div class="note" id="m-note"></div>
+</div></div>
+<script>
+const EMBEDDED={"pools":[{"addr":"0x4b5a976de49c888dfecaf428d808d9242faac820","sym":"DOS","quote":"USDT","dex":"uni","tvl":30638,"age":3.7,"l1":270.1,"l6":131.8,"fee":0.3,"perp":false,"lvr":27.4},{"addr":"0x52ce813e4fe19fa8c4a0ba7ed875a96e84babe0b","sym":"SUMMER","quote":"USDT","dex":"pcs-v3","tvl":12228,"age":96.6,"l1":52.0,"l6":25.4,"fee":1.0,"perp":false,"lvr":25.0},{"addr":"0x5a2b935e3a5c3977828ca1fa680dd01319133a28","sym":"DOS","quote":"USDT","dex":"uni","tvl":106338,"age":5.4,"l1":28.1,"l6":69.3,"fee":1.0,"perp":false,"lvr":2.8},{"addr":"0xe2183220b6725b2a1396878636b407c8db0f42ab","sym":"BLUAI","quote":"USDT","dex":"uni","tvl":10726,"age":7029.4,"l1":15.0,"l6":16.7,"fee":0.3,"perp":true,"lvr":173.7},{"addr":"0xb14de349b7f2e02c1008d135f01a7cf74e4507b8","sym":"DOS","quote":"USDT","dex":"pcs-v3","tvl":40824,"age":4.2,"l1":14.9,"l6":43.6,"fee":1.0,"perp":false,"lvr":1.5},{"addr":"0x8c79de43da7d4511c8ccfe309cb49cedc7f8254d","sym":"$AIAV","quote":"USDT","dex":"uni","tvl":17015,"age":5286.6,"l1":13.1,"l6":8.9,"fee":1.0,"perp":false,"lvr":2.0},{"addr":"0xd1efa79c16004513eee7cb8def4c03301dd52e98","sym":"PIZZA","quote":"USDT","dex":"pcs-v3","tvl":23623,"age":199.8,"l1":12.1,"l6":10.5,"fee":1.0,"perp":false,"lvr":2.3},{"addr":"0x3663bf9ba7f368e9cadc247d224080ec814f1429","sym":"币有","quote":"USDT","dex":"uni","tvl":247428,"age":240.9,"l1":10.7,"l6":5.7,"fee":1.0,"perp":true,"lvr":0.4},{"addr":"0x5f177bd832d6c6807782ca178c6b5ef76fd14953","sym":"VenusCoin","quote":"USDT","dex":"pcs-v3","tvl":21142,"age":129.0,"l1":9.2,"l6":10.9,"fee":1.0,"perp":false,"lvr":2.2},{"addr":"0x66faad27cf481f82d0089ec8156b3aa3636010c7","sym":"SPCXB","quote":"WBNB","dex":"pcs-v3","tvl":692597,"age":214.6,"l1":8.4,"l6":11.6,"fee":0.25,"perp":false,"lvr":28.7}],"updated":"2026-08-10 13:33 UTC"};
+let POOLS=[],sortK='l1',sortDir=-1,filt='all',chart=null;
+const fmtUsd=n=>n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(0)+'k':'$'+n;
+const fmtAge=h=>h<24?h.toFixed(1)+'ч':h<720?(h/24).toFixed(0)+'д':(h/720).toFixed(0)+'мес';
+function pass(d){if(filt==='perp')return d.perp;if(filt==='mature')return d.age>=24;
+if(filt==='stable')return d.quote==='USDT'||d.quote==='USDC';if(filt==='safe')return d.lvr>=5;return true;}
+function render(){
+const rows=POOLS.filter(pass).sort((a,b)=>{let x=a[sortK],y=b[sortK];
+return typeof x==='string'?sortDir*x.localeCompare(y):sortDir*(x-y);});
+s('s-count',POOLS.length);s('s-top',POOLS.length?Math.max(...POOLS.map(d=>d.l1)).toFixed(0):'—');
+s('s-perp',POOLS.filter(d=>d.perp).length);s('s-tvl',fmtUsd(POOLS.reduce((a,d)=>a+d.tvl,0)));
+const tb=document.getElementById('tb');
+if(!rows.length){tb.innerHTML='<tr><td colspan="9" class="empty">Нет пулов под фильтр.</td></tr>';return;}
+tb.innerHTML=rows.map((d,i)=>{const yc=d.l1>=15?'yield-hi':'yield-md';
+const dx=d.dex.startsWith('uni')?'p-uni':'p-pcs';const y=d.age<24,lv=d.lvr>=5?'lvr-hi':d.lvr<1?'lvr-lo':'';
+return `<tr data-i="${i}"><td><span class="sym">${d.sym}</span> <span class="pair">/${d.quote}</span></td>
+<td><span class="pill ${dx}">${d.dex}</span></td><td class="${yc}">${d.l1}</td><td class="dim">${d.l6}</td>
+<td class="${lv}">${d.lvr}</td><td>${fmtUsd(d.tvl)}</td><td class="${y?'young':''}">${fmtAge(d.age)}${y?' ⚠':''}</td>
+<td class="dim">${d.fee}</td><td class="${d.perp?'perp-y':'perp-n'}">${d.perp?'⚡ есть':'—'}</td></tr>`;}).join('');
+[...tb.querySelectorAll('tr[data-i]')].forEach(tr=>tr.onclick=()=>openPool(rows[+tr.dataset.i]));
+}
+function s(id,v){document.getElementById(id).textContent=v;}
+function openPool(d){
+s('m-sym',d.sym+' / '+d.quote);
+s('m-sub',`${d.dex} · TVL ${fmtUsd(d.tvl)} · возраст ${fmtAge(d.age)} · тир ${d.fee}% · перп ${d.perp?'есть ⚡':'нет'}`);
+s('m-l1',d.l1);s('m-l6',d.l6);s('m-lvr',d.lvr);
+let cls='n-good',txt='';
+if(d.age<24){cls='n-bad';txt='Пул младше суток. Статистически это самый рискованный период жизни токена — большинство однодневок сливаются в первые часы.';}
+else if(d.lvr<1){cls='n-warn';txt='Низкий LVR-скор: по нашей методике значительная часть дохода этого пула съедается волатильностью.';}
+else if(d.lvr>=5&&d.l1>=8){cls='n-good';txt='Высокий живой yield при высоком LVR-скоре — редкое сочетание. '+(d.perp?'Есть перп на MEXC.':'Перпа нет.');}
+else{cls='n-good';txt='Зрелый пул с живым доходом. '+(d.perp?'Перп на MEXC есть.':'Перпа нет.');}
+const n=document.getElementById('m-note');n.className='note '+cls;n.textContent=txt;
+document.getElementById('ov').classList.add('show');
+const h=d.hist||[];const ctx=document.getElementById('m-chart');if(chart)chart.destroy();
+chart=new Chart(ctx,{type:'line',data:{labels:h.map(x=>x.ts.slice(11,16)),
+datasets:[{data:h.map(x=>x.l1),borderColor:'#3ddc84',backgroundColor:'rgba(61,220,132,.12)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},
+options:{plugins:{legend:{display:false},title:{display:true,text:'Live yield %/день — история',color:'#7d84a0',font:{size:12}}},
+scales:{x:{ticks:{color:'#7d84a0',maxTicksLimit:6},grid:{color:'#232838'}},y:{ticks:{color:'#7d84a0'},grid:{color:'#232838'}}}}});
+}
+document.getElementById('mx').onclick=()=>document.getElementById('ov').classList.remove('show');
+document.getElementById('ov').onclick=e=>{if(e.target.id==='ov')e.target.classList.remove('show');};
+document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
+if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=(k==='sym'||k==='dex')?1:-1;}
+document.querySelectorAll('th .ar').forEach(a=>a.remove());
+const ar=document.createElement('span');ar.className='ar';ar.textContent=sortDir<0?' ▼':' ▲';th.appendChild(ar);render();});
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filt=c.dataset.f;render();});
+async function load(){
+try{const r=await (await fetch('./pools.json?t='+Date.now())).json();POOLS=r.pools;s('live-txt','данные от '+(r.updated||'—'));render();}
+catch(e){POOLS=EMBEDDED.pools;s('live-txt','демо-данные от '+(EMBEDDED.updated||'—'));render();}
+}
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
