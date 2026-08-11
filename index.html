@@ -140,9 +140,11 @@
     </div>
     <table id="ptbl"><thead><tr>
       <th>Пара</th><th>DEX</th><th>Тир %</th><th>Диапазон</th><th>Статус</th>
-      <th>В позиции</th><th>Несобранные комиссии</th><th>Действия</th>
-    </tr></thead><tbody id="ptb"><tr><td colspan="8" class="empty">Подключи кошелёк, чтобы увидеть свои LP-позиции.</td></tr></tbody></table>
-    <div class="foot">Показаны позиции Uniswap v3 и PancakeSwap v3 на BSC, привязанные к подключённому адресу. Данные читаются напрямую из блокчейна — PoolRadar не хранит твои ключи и не имеет доступа к средствам.</div>
+      <th>В позиции</th><th>Несобранные комиссии</th><th>APR набл.</th><th>Действия</th>
+    </tr></thead><tbody id="ptb"><tr><td colspan="9" class="empty">Подключи кошелёк, чтобы увидеть свои LP-позиции.</td></tr></tbody></table>
+    <div class="foot">Показаны позиции Uniswap v3 и PancakeSwap v3 на BSC, привязанные к подключённому адресу. Данные читаются напрямую из блокчейна — PoolRadar не хранит твои ключи и не имеет доступа к средствам.
+      <br><b>APR набл.</b> — доходность, посчитанная по фактическому приросту комиссий с того момента, как ты впервые открыл эту страницу с этой позицией. Первые полчаса показывает «копится».
+      <br><span id="fee-note"></span></div>
   </div>
 
   <div class="disc">PoolRadar — информационный инструмент. Данные агрегируются из публичных источников (GeckoTerminal, DexScreener, MEXC) и могут содержать неточности или задержки. Это не финансовая рекомендация и не призыв к покупке. Транзакции подписываются исключительно твоим кошельком, на твой страх и риск. DeFi сопряжён с высоким риском полной потери средств, включая непостоянные потери и полное обесценивание токена. Проверяйте всё самостоятельно.</div>
@@ -230,6 +232,14 @@ function dexOf(tag){const t=(tag||'').toLowerCase();
   if(t.startsWith('uni'))return DEXES.uni;
   if(t.startsWith('pcs')&&t.includes('v3'))return DEXES.pcs;
   return null;}
+/* Контракт-делитель: удерживает плату за сервис при сборе комиссий.
+   Пока адрес пустой — сбор идёт напрямую через DEX и плата НЕ берётся. */
+const COLLECTOR='';
+const SERVICE_FEE_PCT=10;
+const COLLECTOR_ABI=['function collect(address npm,uint256 tokenId) returns (uint256,uint256)',
+  'function FEE_BPS() view returns (uint256)','function treasury() view returns (address)'];
+const feeOn=()=>!!COLLECTOR;
+
 const ERC20_ABI=['function symbol() view returns (string)','function decimals() view returns (uint8)',
   'function balanceOf(address) view returns (uint256)','function allowance(address,address) view returns (uint256)',
   'function approve(address,uint256) returns (bool)','function deposit() payable'];
@@ -239,7 +249,8 @@ const NPM_ABI=['function balanceOf(address) view returns (uint256)',
   'function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) payable returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)',
   'function collect((uint256 tokenId,address recipient,uint128 amount0Max,uint128 amount1Max)) payable returns (uint256 amount0,uint256 amount1)',
   'function decreaseLiquidity((uint256 tokenId,uint128 liquidity,uint256 amount0Min,uint256 amount1Min,uint256 deadline)) payable returns (uint256 amount0,uint256 amount1)',
-  'function multicall(bytes[] data) payable returns (bytes[])'];
+  'function multicall(bytes[] data) payable returns (bytes[])',
+  'function getApproved(uint256) view returns (address)','function approve(address,uint256)'];
 const FACTORY_ABI=['function getPool(address,address,uint24) view returns (address)'];
 const MAX128='0xffffffffffffffffffffffffffffffff';
 const MIN_TICK=-887272,MAX_TICK=887272;
@@ -290,6 +301,48 @@ function toUnits(x,dec){
   try{return ethers.utils.parseUnits(s,dec);}catch(e){return ethers.constants.Zero;}
 }
 const fromUnits=(bn,dec)=>parseFloat(ethers.utils.formatUnits(bn,dec));
+
+/* ---- цены в долларах (DexScreener, публичный API) ---- */
+const pxCache={};
+async function usdPrices(addrs){
+  const need=[...new Set(addrs.map(a=>a.toLowerCase()))].filter(a=>!(a in pxCache));
+  for(let i=0;i<need.length;i+=25){
+    const chunk=need.slice(i,i+25);
+    try{
+      const r=await (await fetch('https://api.dexscreener.com/latest/dex/tokens/'+chunk.join(','))).json();
+      const best={};
+      (r.pairs||[]).forEach(p=>{
+        if(p.chainId!=='bsc'||!p.priceUsd)return;
+        const liq=(p.liquidity&&p.liquidity.usd)||0;
+        [[p.baseToken,parseFloat(p.priceUsd)],
+         [p.quoteToken,p.priceNative?parseFloat(p.priceUsd)/parseFloat(p.priceNative):null]]
+        .forEach(([t,px])=>{
+          if(!t||!px||!isFinite(px))return;
+          const k=(t.address||'').toLowerCase();
+          if(!best[k]||best[k].liq<liq)best[k]={liq,px};
+        });
+      });
+      chunk.forEach(a=>{pxCache[a]=best[a]?best[a].px:null;});
+    }catch(e){chunk.forEach(a=>{pxCache[a]=null;});}
+  }
+  return pxCache;
+}
+const usdOf=(a,amt)=>{const p=pxCache[(a||'').toLowerCase()];return (p&&isFinite(p))?p*amt:null;};
+const fmtUsd2=v=>v===null||!isFinite(v)?'—':(v<0.01?'<$0.01':'$'+v.toLocaleString('ru-RU',{maximumFractionDigits:2}));
+
+/* ---- APR по наблюдению: копим замеры комиссий в localStorage ---- */
+function aprTrack(id,feesUsd,valUsd){
+  const key='pr_fee_'+id;let st=null;
+  try{st=JSON.parse(localStorage.getItem(key)||'null');}catch(e){}
+  const now=Date.now();
+  if(!st||!isFinite(st.f)||feesUsd<st.f-1e-9){   // первый замер или комиссии собрали — база сбрасывается
+    try{localStorage.setItem(key,JSON.stringify({t:now,f:feesUsd}));}catch(e){}
+    return null;
+  }
+  const days=(now-st.t)/86400000, grew=feesUsd-st.f;
+  if(days<1/48||!valUsd||valUsd<=0)return {days,apr:null};   // меньше 30 минут — рано считать
+  return {days,apr:grew/valUsd/days*365*100};
+}
 
 /* ================= подключение кошелька ================= */
 function shortAddr(a){return a.slice(0,6)+'…'+a.slice(-4);}
@@ -600,8 +653,11 @@ async function loadPositions(){
         }catch(e){}
       }
     }
-    if(!out.length){tb.innerHTML='<tr><td colspan="8" class="empty">Открытых LP-позиций не найдено.</td></tr>';
+    if(!out.length){tb.innerHTML='<tr><td colspan="9" class="empty">Открытых LP-позиций не найдено.</td></tr>';
       s('pos-status','');POSBUSY=false;return;}
+    s('pos-status','беру курсы токенов…');
+    const addrs=[];out.forEach(o=>{addrs.push(o.p.token0,o.p.token1);});
+    await usdPrices(addrs);
     const rows=await Promise.all(out.map(o=>describePos(o)));
     tb.innerHTML=rows.map(r=>r.html).join('');
     rows.forEach(r=>{
@@ -609,7 +665,7 @@ async function loadPositions(){
       const b2=document.getElementById('cls-'+r.id);if(b2)b2.onclick=()=>closePos(r);
     });
     s('pos-status',rows.length+' позиц.');
-  }catch(e){tb.innerHTML='<tr><td colspan="8" class="empty red">'+errText(e)+'</td></tr>';}
+  }catch(e){tb.innerHTML='<tr><td colspan="9" class="empty red">'+errText(e)+'</td></tr>';}
   POSBUSY=false;
 }
 async function describePos(o){
@@ -637,26 +693,62 @@ async function describePos(o){
     const r=await npm.callStatic.collect({tokenId:id,recipient:account,amount0Max:MAX128,amount1Max:MAX128},{from:account});
     f0=fromUnits(r.amount0,i0.dec);f1=fromUnits(r.amount1,i1.dec);
   }catch(e){}
+  // деньги: стоимость позиции и комиссии в долларах
+  const v0=usdOf(i0.addr,h0), v1=usdOf(i1.addr,h1);
+  const valUsd=(v0===null&&v1===null)?null:(v0||0)+(v1||0);
+  const c0=usdOf(i0.addr,f0), c1=usdOf(i1.addr,f1);
+  const feeUsd=(c0===null&&c1===null)?null:(c0||0)+(c1||0);
+  // близость к границе диапазона
+  const width=p.tickUpper-p.tickLower;
+  const edge=width>0?Math.min(sl?sl.tick-p.tickLower:0,sl?p.tickUpper-sl.tick:0)/width:1;
+  const near=inRange&&edge<0.12;
+  // APR по наблюдению
   const idS=id.toString();
+  const tr=(feeUsd!==null&&valUsd)?aprTrack(dex.key+idS,feeUsd,valUsd):null;
+  let aprCell='<span class="dim">копится…</span>';
+  if(tr&&tr.apr!==null)
+    aprCell=`<b class="${tr.apr>=20?'green':tr.apr>=5?'amber':'dim'}">${tr.apr.toFixed(1)}%</b>
+             <br><span class="dim" style="font-size:11px">за ${tr.days<1?(tr.days*24).toFixed(1)+' ч':tr.days.toFixed(1)+' дн'}</span>`;
+  else if(tr)aprCell=`<span class="dim">копится…<br><span style="font-size:11px">${(tr.days*24*60).toFixed(0)} мин</span></span>`;
+
   const html=`<tr>
     <td><span class="sym">${bs.sym}</span> <span class="pair">/${qs.sym}</span>
         <a class="pair lnk" target="_blank" href="${dex.pos(idS)}">#${idS}</a></td>
     <td><span class="pill ${dex.key==='uni'?'p-uni':'p-pcs'}">${dex.key==='uni'?'uni':'pcs-v3'}</span></td>
     <td class="dim">${(p.fee/10000).toString()}</td>
     <td>${fmtN(lo)} — ${fmtN(hi)}</td>
-    <td><span class="pill ${inRange?'p-in':'p-out'}">${inRange?'в диапазоне':'вне'}</span></td>
-    <td>${fmtN(h0)} ${i0.sym}<br><span class="dim">${fmtN(h1)} ${i1.sym}</span></td>
-    <td class="${(f0+f1)>0?'green':'dim'}">${fmtN(f0)} ${i0.sym}<br>${fmtN(f1)} ${i1.sym}</td>
+    <td><span class="pill ${inRange?'p-in':'p-out'}">${inRange?'в диапазоне':'вне'}</span>
+        ${near?'<br><span class="amber" style="font-size:11.5px">⚠ у границы</span>':''}</td>
+    <td>${fmtUsd2(valUsd)}<br><span class="dim" style="font-size:11.5px">${fmtN(h0)} ${i0.sym} · ${fmtN(h1)} ${i1.sym}</span></td>
+    <td class="${(f0+f1)>0?'green':'dim'}">${fmtUsd2(feeUsd)}
+        <br><span class="dim" style="font-size:11.5px">${fmtN(f0)} ${i0.sym} · ${fmtN(f1)} ${i1.sym}</span></td>
+    <td>${aprCell}</td>
     <td><button class="btn sec sm" id="col-${idS}">Собрать</button>
         <button class="btn sec sm" id="cls-${idS}">Закрыть</button></td></tr>`;
-  return {html,id:idS,tokenId:id,dex,p,i0,i1};
+  return {html,id:idS,tokenId:id,dex,p,i0,i1,feeUsd};
 }
 async function collectFees(r){
   try{
     if(!signer)await connect();
     const npm=new ethers.Contract(r.dex.npm,NPM_ABI,signer);
+    if(!feeOn()){
+      s('pos-status','подтверди сбор комиссий в кошельке…');
+      const tx=await npm.collect({tokenId:r.tokenId,recipient:account,amount0Max:MAX128,amount1Max:MAX128});
+      s('pos-status','жду сеть…');await tx.wait();
+      s('pos-status','комиссии собраны');loadPositions();return;
+    }
+    const share=r.feeUsd?` Примерно ${fmtUsd2(r.feeUsd*SERVICE_FEE_PCT/100)} из ${fmtUsd2(r.feeUsd)}.`:'';
+    if(!confirm(`Сбор комиссий через PoolRadar: сервис удерживает ${SERVICE_FEE_PCT}%, остальные ${100-SERVICE_FEE_PCT}% приходят на твой кошелёк той же транзакцией.${share}\n\nСобрать без платы можно напрямую на сайте DEX — ссылка на позицию есть в первой колонке.\n\nПродолжить?`))
+      {s('pos-status','');return;}
+    const appr=await npm.getApproved(r.tokenId);
+    if((appr||'').toLowerCase()!==COLLECTOR.toLowerCase()){
+      s('pos-status','подтверди доступ к позиции (разовая операция)…');
+      const tx0=await npm.approve(COLLECTOR,r.tokenId);
+      s('pos-status','жду сеть…');await tx0.wait();
+    }
+    const col=new ethers.Contract(COLLECTOR,COLLECTOR_ABI,signer);
     s('pos-status','подтверди сбор комиссий в кошельке…');
-    const tx=await npm.collect({tokenId:r.tokenId,recipient:account,amount0Max:MAX128,amount1Max:MAX128});
+    const tx=await col.collect(r.dex.npm,r.tokenId);
     s('pos-status','жду сеть…');await tx.wait();
     s('pos-status','комиссии собраны');loadPositions();
   }catch(e){s('pos-status',errText(e));}
@@ -681,6 +773,12 @@ async function closePos(r){
 document.getElementById('pos-refresh').onclick=loadPositions;
 
 /* ================= старт ================= */
+(function feeNotice(){
+  const t=document.getElementById('fee-note');if(!t)return;
+  t.innerHTML=feeOn()
+    ? `<b>Плата за сервис:</b> при сборе комиссий кнопкой «Собрать» PoolRadar удерживает <b>${SERVICE_FEE_PCT}%</b> от собранных комиссий, ${100-SERVICE_FEE_PCT}% приходят тебе той же транзакцией. С тела позиции и при закрытии плата не берётся. Собрать без платы можно напрямую на сайте DEX — ссылка на позицию есть в первой колонке. Контракт-делитель: <a class="lnk" target="_blank" href="https://bscscan.com/address/${COLLECTOR}#code">${COLLECTOR}</a> — доля вшита в код константой и не может быть изменена, права переводить твою позицию у контракта нет.`
+    : `<b>Плата за сервис:</b> сейчас не берётся — сбор комиссий идёт напрямую через контракты DEX.`;
+})();
 load();setInterval(load,60000);
 (async()=>{ // тихое переподключение, если кошелёк уже авторизован
   try{
