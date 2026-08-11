@@ -425,6 +425,10 @@ async function buildLP(d){
     meta=await poolMeta(d.addr);
     [sl,i0,i1]=await Promise.all([slot0(d.addr),tokenInfo(meta.t0),tokenInfo(meta.t1)]);
   }catch(e){box.innerHTML='<h3>Открыть позицию</h3><div class="msg red">Не удалось прочитать пул: '+(e.message||e)+'</div>';return;}
+  // активная ликвидность пула — из неё считается доля новой позиции в комиссиях
+  let Lact=0;
+  try{Lact=parseFloat(ethers.BigNumber.from(await roProvider().call({to:d.addr,data:'0x1a686502'})).toString());}catch(e){}
+  try{await usdPrices([meta.t0,meta.t1]);}catch(e){}
   const spRaw=parseFloat(ethers.utils.formatUnits(sl.sqrtPriceX96,0))/Math.pow(2,96);
   // отображаемая цена: сколько quote за 1 base
   const baseIs0=(i0.sym.toUpperCase()===String(d.sym).toUpperCase())||
@@ -433,7 +437,7 @@ async function buildLP(d){
   const base=baseIs0?i0:i1, quote=baseIs0?i1:i0;
   const p0in1=spRaw*spRaw*Math.pow(10,i0.dec-i1.dec);   // цена token0 в token1 (человеческая)
   const price=baseIs0?p0in1:1/p0in1;                     // quote за 1 base
-  LP={d,dex,meta,sl,i0,i1,base,quote,baseIs0,spRaw,price};
+  LP={d,dex,meta,sl,i0,i1,base,quote,baseIs0,spRaw,price,Lact};
 
   box.innerHTML=`<h3>Открыть позицию · ${dex.name}</h3>
     <div class="lprow"><span class="k">Текущая цена</span><b>${fmtN(price)} ${quote.sym} за 1 ${base.sym}</b></div>
@@ -444,6 +448,7 @@ async function buildLP(d){
     <div class="lprow"><span class="k">Верхняя граница</span><b id="lp-hit">+15%</b></div>
     <input type="range" class="rng" id="lp-hi" min="1" max="300" step="1" value="15">
     <div class="band" id="lp-band">…</div>
+    <div class="band" id="lp-apr">…</div>
     <div class="lbl">Сколько вложить (${quote.sym})</div>
     <input type="text" id="lp-amt" inputmode="decimal" placeholder="0.0">
     <div class="lprow"><span class="k">Баланс: <span id="lp-bal">—</span> ${quote.sym}</span>
@@ -497,11 +502,16 @@ function recalc(){
   const amtStr=(document.getElementById('lp-amt').value||'').replace(',','.');
   const amt=parseFloat(amtStr);
   const need=document.getElementById('lp-need');
+  const real=isFinite(amt)&&amt>0;
   LP.plan=null;
-  if(!isFinite(amt)||amt<=0){need.textContent='Введи сумму — посчитаю, сколько нужно второго токена.';renderLPButtons();return;}
+  // если сумма ещё не введена — считаем APR на условные ~$100, чтобы ползунок сразу что-то показывал
+  // позиция состоит из двух токенов, поэтому на «ногу» берём половину — итог выйдет ~$100
+  const qPx=usdOf(quote.addr,1);
+  const amtEff=real?amt:(qPx?50/qPx:1);
+  if(!real)need.textContent='Введи сумму — посчитаю, сколько нужно второго токена.';
   const sa=sqrtAt(tickLower),sb=sqrtAt(tickUpper),sp=spRaw;
   const quoteIs0=(quote===i0);
-  const qRaw=amt*Math.pow(10,quote.dec);
+  const qRaw=amtEff*Math.pow(10,quote.dec);
   let L;
   if(quoteIs0){ // задан amount0
     L=sp<=sa?qRaw/(1/sa-1/sb):(sp>=sb?0:qRaw/(1/sp-1/sb));
@@ -511,12 +521,51 @@ function recalc(){
   if(!isFinite(L)||L<=0){need.textContent='Диапазон некорректен, подвинь ползунки.';renderLPButtons();return;}
   const [a0,a1]=amountsFor(L,sp,sa,sb);
   const h0=a0/Math.pow(10,i0.dec), h1=a1/Math.pow(10,i1.dec);
-  LP.plan={tickLower,tickUpper,L,a0:h0,a1:h1};
-  const hb=baseIs0?h0:h1, hq=baseIs0?h1:h0;
-  need.innerHTML=`Понадобится: <b>${fmtN(hb)} ${base.sym}</b> + <b>${fmtN(hq)} ${quote.sym}</b>
-    <br><span class="dim">Позиция в v3 состоит из двух токенов. Если ${base.sym} на кошельке нет — его нужно сначала купить.</span>`;
+  if(real){
+    LP.plan={tickLower,tickUpper,L,a0:h0,a1:h1};
+    const hb=baseIs0?h0:h1, hq=baseIs0?h1:h0;
+    need.innerHTML=`Понадобится: <b>${fmtN(hb)} ${base.sym}</b> + <b>${fmtN(hq)} ${quote.sym}</b>
+      <br><span class="dim">Позиция в v3 состоит из двух токенов. Если ${base.sym} на кошельке нет — его нужно сначала купить.</span>`;
+  }
+  showApr(L,h0,h1,real,amtEff);
   renderLPButtons();
   if(account)refreshBalances();
+}
+
+/* Расчётный APR диапазона.
+   Логика: пул зарабатывает примерно (live yield × TVL) в день. Новая позиция получает
+   долю комиссий, равную её доле в активной ликвидности пула. Чем уже коридор — тем больше
+   ликвидности даёт тот же капитал, тем больше доля. Цена обязана оставаться внутри коридора. */
+function showApr(L,h0,h1,real,amtEff){
+  const el=document.getElementById('lp-apr');if(!el||!LP)return;
+  const {d,i0,i1,quote,Lact}=LP;
+  const capUsd=(usdOf(i0.addr,h0)||0)+(usdOf(i1.addr,h1)||0);
+  // берём более осторожную из двух наших оценок дохода: часовая слишком дёргается
+  const yld=Math.min(d.l1,(d.l6>0?d.l6:d.l1));
+  const poolDaily=(yld/100)*d.tvl;                // комиссии всего пула в день, $
+  const share=(Lact>0)?L/(Lact+L):1;
+  const myDaily=poolDaily*share;
+  if(!capUsd||!isFinite(capUsd)||!isFinite(myDaily)){
+    el.innerHTML='<span class="dim">Расчётный APR недоступен: не удалось получить курс одного из токенов.</span>';return;}
+  const perDay=myDaily/capUsd*100;
+  const apr=perDay*365;
+  const cls=apr>=100?'green':apr>=25?'amber':'dim';
+  const per=real?'':` <span class="dim">на ~${fmtUsd2(capUsd)}</span>`;
+  // сколько времени цена в среднем продержится внутри коридора при нынешней волатильности
+  const lo=+document.getElementById('lp-lo').value, hi=+document.getElementById('lp-hi').value;
+  let hold=null;
+  const sigma=(d.lvr>0&&d.l1>0)?Math.sqrt(8*d.l1/d.lvr):null;   // ~% движения цены за час
+  if(sigma&&sigma>0)hold=lo*hi/(sigma*sigma);                    // среднее время до выхода за границу
+  const holdTxt=hold?`<br>при нынешней волатильности цена остаётся в коридоре в среднем <b>${hold<1?Math.round(hold*60)+' мин':hold<48?hold.toFixed(0)+' ч':(hold/24).toFixed(0)+' дн'}</b>`:'';
+  let warn='';
+  if(hold&&hold<6)warn='<br><span class="amber">Коридор слишком узкий для этой монеты: цена вылетит из него за считаные часы, а вне диапазона позиция не зарабатывает ничего.</span>';
+  else if(share>0.25)warn='<br><span class="amber">Позиция займёт заметную долю пула — реальный доход будет ниже расчётного, потому что комиссии делятся с теми, кто уже стоит в этом же коридоре.</span>';
+  const aprTxt=apr>10000?'&gt; 10 000%':(apr<1?apr.toFixed(2)+'%':Math.round(apr).toLocaleString('ru-RU')+'%');
+  if(apr>10000)warn+='<br><span class="amber">Такая годовая цифра нереализуема: она получается переносом сегодняшнего всплеска объёмов на год вперёд. Смотри на доход в день и на время жизни коридора — они ближе к правде.</span>';
+  el.innerHTML=`Расчётный APR диапазона: <b class="${cls}">${aprTxt}</b>
+    <span class="dim">·</span> <b>${perDay<1?perDay.toFixed(2):perDay.toFixed(1)}%</b> в день${per}
+    <br>≈ <b>${fmtUsd2(myDaily)}</b> в день · доля в активной ликвидности ${(share*100).toFixed(share<1?2:0)}%${holdTxt}
+    <br><span class="dim">Оценка по текущим объёмам и только пока цена внутри границ. Она не учитывает падение самого токена — а именно оно, а не комиссии, обычно и определяет итог.</span>${warn}`;
 }
 
 async function refreshBalances(){
