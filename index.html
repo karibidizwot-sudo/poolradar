@@ -151,10 +151,15 @@ document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.d
   const ar=document.createElement('span');ar.className='ar';ar.textContent=sortDir<0?' ▼':' ▲';th.appendChild(ar);render();});
 document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
   document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filt=c.dataset.f;render();});
+function ago(ts){
+  if(!ts)return'';const m=Math.round((Date.now()/1000-ts)/60);
+  if(m<1)return' · только что';if(m<60)return' · '+m+' мин назад';
+  const h=Math.round(m/60);return h<24?' · '+h+' ч назад':' · '+Math.round(h/24)+' д назад';
+}
 async function load(){
   try{const r=await (await fetch('./pools.json?t='+Date.now())).json();POOLS=r.pools;
-    s('live-txt','данные от '+(r.updated||'—'));render();}
-  catch(e){s('live-txt','pools.json не найден');}
+    s('live-txt',(r.updated||'—')+ago(r.updated_ts));render();}
+  catch(e){s('live-txt','данные загружаются…');}
 }
 load();setInterval(load,60000);
 </script>
