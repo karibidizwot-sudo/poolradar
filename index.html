@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PoolRadar — горячие LP-пулы BSC</title>
-<meta name="description" content="Живой скринер горячих пулов ликвидности на BSC: живой yield, LVR-скор, возраст пула, наличие перпа для хеджа.">
+<meta name="description" content="Живой скринер горячих пулов ликвидности на BSC: живой yield, LVR-скор, возраст пула, наличие перпа для хеджа. Открытие LP-позиций прямо из браузера.">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 <style>
   :root{--bg:#0d0f16;--card:#161925;--line:#232838;--fg:#e6e8f0;--dim:#7d84a0;
     --green:#3ddc84;--red:#ff5d6c;--amber:#ffb545;--acc:#4fa3ff;}
@@ -22,23 +23,35 @@
   .tag{color:var(--dim);font-size:14.5px;margin-top:6px;max-width:680px;line-height:1.5}
   .stats{display:flex;gap:26px;margin-top:20px;flex-wrap:wrap}
   .stat b{font-size:22px;font-weight:700}.stat .k{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-top:2px}
-  .green{color:var(--green)}.amber{color:var(--amber)}.acc{color:var(--acc)}.dim{color:var(--dim)}
-  .live{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim);margin-left:auto}
+  .green{color:var(--green)}.amber{color:var(--amber)}.acc{color:var(--acc)}.dim{color:var(--dim)}.red{color:var(--red)}
+  .live{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--dim)}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(61,220,132,.5)}70%{box-shadow:0 0 0 7px rgba(61,220,132,0)}100%{box-shadow:0 0 0 0 rgba(61,220,132,0)}}
+  .spacer{margin-left:auto}
   .controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
   .chip{background:var(--card);border:1px solid var(--line);color:var(--dim);padding:8px 14px;border-radius:999px;font-size:13px;cursor:pointer;user-select:none;transition:.15s}
   .chip:hover{border-color:var(--acc);color:var(--fg)}.chip.on{background:rgba(79,163,255,.14);border-color:var(--acc);color:var(--acc)}
+  .nav{display:flex;gap:8px;align-items:center;margin:18px 0 0;flex-wrap:wrap}
+  .tab{padding:9px 16px;border-radius:10px;font-size:14px;cursor:pointer;color:var(--dim);border:1px solid transparent}
+  .tab:hover{color:var(--fg)}.tab.on{background:var(--card);border-color:var(--line);color:var(--fg);font-weight:600}
+  .btn{background:var(--acc);color:#04121f;border:none;padding:10px 16px;border-radius:10px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .btn:hover{filter:brightness(1.08)}.btn:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .btn.sec{background:transparent;border:1px solid var(--line);color:var(--fg)}
+  .btn.sec:hover{border-color:var(--acc)}
+  .btn.go{background:var(--green);color:#052314}
+  .btn.sm{padding:6px 11px;font-size:12px;border-radius:8px}
   table{width:100%;border-collapse:collapse;background:var(--card);border-radius:14px;overflow:hidden;border:1px solid var(--line)}
   th,td{padding:12px 14px;text-align:right;font-size:14px;white-space:nowrap}
   th:first-child,td:first-child{text-align:left}
   thead th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;cursor:pointer;border-bottom:1px solid var(--line);background:#12151f}
   thead th:hover{color:var(--fg)}thead th .ar{opacity:.4;font-size:10px}
-  tbody tr{border-bottom:1px solid rgba(35,40,56,.6);cursor:pointer}tbody tr:last-child{border-bottom:none}
+  tbody tr{border-bottom:1px solid rgba(35,40,56,.6)}tbody tr:last-child{border-bottom:none}
+  #tb tr{cursor:pointer}
   tbody tr:hover{background:rgba(79,163,255,.06)}
   .sym{font-weight:700;font-size:15px}.pair{color:var(--dim);font-weight:400;font-size:12.5px}
   .pill{display:inline-block;padding:2px 9px;border-radius:6px;font-size:12px;font-weight:600}
   .p-uni{background:rgba(255,93,108,.16);color:#ff8a95}.p-pcs{background:rgba(255,181,69,.16);color:var(--amber)}
+  .p-in{background:rgba(61,220,132,.16);color:var(--green)}.p-out{background:rgba(255,93,108,.16);color:#ff8a95}
   .yield-hi{color:var(--green);font-weight:700}.yield-md{color:var(--amber);font-weight:600}
   .perp-y{color:var(--acc)}.perp-n{color:var(--dim)}.young{color:var(--red);font-weight:600}
   .lvr-hi{color:var(--green)}.lvr-lo{color:var(--red)}
@@ -46,9 +59,9 @@
   .disc{color:var(--dim);font-size:11.5px;margin-top:14px;opacity:.75;line-height:1.5}
   .badge{display:inline-block;background:rgba(61,220,132,.14);color:var(--green);font-size:11px;padding:3px 9px;border-radius:6px;margin-left:8px;vertical-align:middle;font-weight:600}
   .empty{padding:40px;text-align:center;color:var(--dim)}
-  .ov{position:fixed;inset:0;background:rgba(6,8,14,.72);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .ov{position:fixed;inset:0;background:rgba(6,8,14,.72);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:center;z-index:50;padding:20px;overflow-y:auto}
   .ov.show{display:flex}
-  .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;width:100%;max-width:560px;padding:24px;position:relative}
+  .modal{background:var(--card);border:1px solid var(--line);border-radius:16px;width:100%;max-width:560px;padding:24px;position:relative;margin:auto}
   .modal h2{font-size:22px}.modal .x{position:absolute;top:16px;right:18px;color:var(--dim);cursor:pointer;font-size:22px}
   .modal .x:hover{color:var(--fg)}
   .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
@@ -58,12 +71,30 @@
   .n-good{background:rgba(61,220,132,.10);border:1px solid rgba(61,220,132,.3)}
   .n-warn{background:rgba(255,181,69,.10);border:1px solid rgba(255,181,69,.3)}
   .n-bad{background:rgba(255,93,108,.10);border:1px solid rgba(255,93,108,.3)}
+  .lp{margin-top:18px;border-top:1px solid var(--line);padding-top:18px}
+  .lp h3{font-size:15px;margin-bottom:12px}
+  .lprow{display:flex;justify-content:space-between;align-items:center;font-size:13.5px;padding:5px 0;gap:12px}
+  .lprow .k{color:var(--dim)}
+  .rng{width:100%;margin:6px 0 2px;accent-color:var(--acc)}
+  .band{background:#12151f;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:10px 0;font-size:13px}
+  .band b{font-size:14px}
+  input[type=text],input[type=number],select{background:#0f121b;border:1px solid var(--line);color:var(--fg);border-radius:9px;padding:10px 12px;font-size:15px;font-family:inherit;width:100%}
+  input:focus,select:focus{outline:none;border-color:var(--acc)}
+  .lbl{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.4px;margin:12px 0 5px}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .btns .btn{flex:1;min-width:150px}
+  .msg{font-size:13px;margin-top:10px;line-height:1.5;word-break:break-word}
+  .lnk{color:var(--acc);text-decoration:none}.lnk:hover{text-decoration:underline}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--dim);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+  .hide{display:none}
+  @media(max-width:760px){.stats{gap:16px}th,td{padding:10px 8px;font-size:13px}}
 </style>
 </head>
 <body>
 <header><div class="wrap">
   <div class="toprow">
     <div class="logo"><div class="radar"></div><h1>Pool<span class="g">Radar</span> <span class="badge">BSC</span></h1></div>
+    <div class="spacer"></div>
     <div class="live"><span class="dot"></span><span id="live-txt">загрузка…</span></div>
   </div>
   <div class="tag">Скринер горячих пулов ликвидности на BSC. Находит пулы с живым комиссионным доходом раньше общих списков и сразу показывает качество этого дохода — по собственной методике.</div>
@@ -73,26 +104,50 @@
     <div class="stat"><b class="acc" id="s-perp">—</b><div class="k">с перпом</div></div>
     <div class="stat"><b id="s-tvl">—</b><div class="k">суммарный TVL</div></div>
   </div>
+  <div class="nav">
+    <div class="tab on" data-t="radar">Радар</div>
+    <div class="tab" data-t="pos">Мои позиции</div>
+    <div class="spacer"></div>
+    <button class="btn sec" id="wbtn">Подключить кошелёк</button>
+  </div>
 </div></header>
+
 <div class="wrap">
-  <div class="controls">
-    <div class="chip on" data-f="all">Все</div>
-    <div class="chip" data-f="perp">⚡ С перпом</div>
-    <div class="chip" data-f="mature">✓ Зрелые ≥24ч</div>
-    <div class="chip" data-f="stable">$ Пара со стейблом</div>
-    <div class="chip" data-f="safe">🛡 LVR ≥ 5</div>
+  <div id="sec-radar">
+    <div class="controls">
+      <div class="chip on" data-f="all">Все</div>
+      <div class="chip" data-f="perp">⚡ С перпом</div>
+      <div class="chip" data-f="mature">✓ Зрелые ≥24ч</div>
+      <div class="chip" data-f="stable">$ Пара со стейблом</div>
+      <div class="chip" data-f="safe">🛡 LVR ≥ 5</div>
+    </div>
+    <table id="tbl"><thead><tr>
+      <th data-k="sym">Токен</th><th data-k="dex">DEX</th>
+      <th data-k="l1">Live 1ч %/д <span class="ar">▼</span></th><th data-k="l6">Live 6ч %/д</th>
+      <th data-k="lvr">LVR-скор</th><th data-k="tvl">TVL $</th><th data-k="age">Возраст</th>
+      <th data-k="fee">Тир %</th><th data-k="perp">Перп</th>
+    </tr></thead><tbody id="tb"></tbody></table>
+    <div class="foot">
+      <b>Как читать:</b> <b>Live yield</b> — оценка комиссионного дохода пула в %/день по собственной методике, отражающая то, что происходит прямо сейчас, а не «среднее за сутки». <b>LVR-скор</b> — наш индекс качества дохода: чем выше, тем меньше дохода съедает волатильность. Пулы младше суток помечены ⚠. <b>Перп</b> — есть ли фьючерс для хеджа.
+      <br>Клик по строке — карточка пула и открытие позиции своим кошельком.
+    </div>
   </div>
-  <table id="tbl"><thead><tr>
-    <th data-k="sym">Токен</th><th data-k="dex">DEX</th>
-    <th data-k="l1">Live 1ч %/д <span class="ar">▼</span></th><th data-k="l6">Live 6ч %/д</th>
-    <th data-k="lvr">LVR-скор</th><th data-k="tvl">TVL $</th><th data-k="age">Возраст</th>
-    <th data-k="fee">Тир %</th><th data-k="perp">Перп</th>
-  </tr></thead><tbody id="tb"></tbody></table>
-  <div class="foot">
-    <b>Как читать:</b> <b>Live yield</b> — оценка комиссионного дохода пула в %/день по собственной методике, отражающая то, что происходит прямо сейчас, а не «среднее за сутки». <b>LVR-скор</b> — наш индекс качества дохода: чем выше, тем меньше дохода съедает волатильность. Пулы младше суток помечены ⚠. <b>Перп</b> — есть ли фьючерс для хеджа.
+
+  <div id="sec-pos" class="hide">
+    <div class="controls">
+      <button class="btn sec sm" id="pos-refresh">Обновить</button>
+      <span class="dim" id="pos-status" style="align-self:center;font-size:13px"></span>
+    </div>
+    <table id="ptbl"><thead><tr>
+      <th>Пара</th><th>DEX</th><th>Тир %</th><th>Диапазон</th><th>Статус</th>
+      <th>В позиции</th><th>Несобранные комиссии</th><th>Действия</th>
+    </tr></thead><tbody id="ptb"><tr><td colspan="8" class="empty">Подключи кошелёк, чтобы увидеть свои LP-позиции.</td></tr></tbody></table>
+    <div class="foot">Показаны позиции Uniswap v3 и PancakeSwap v3 на BSC, привязанные к подключённому адресу. Данные читаются напрямую из блокчейна — PoolRadar не хранит твои ключи и не имеет доступа к средствам.</div>
   </div>
-  <div class="disc">PoolRadar — информационный инструмент. Данные агрегируются из публичных источников (GeckoTerminal, DexScreener, MEXC) и могут содержать неточности или задержки. Это не финансовая рекомендация и не призыв к покупке. DeFi сопряжён с высоким риском полной потери средств. Проверяйте всё самостоятельно.</div>
+
+  <div class="disc">PoolRadar — информационный инструмент. Данные агрегируются из публичных источников (GeckoTerminal, DexScreener, MEXC) и могут содержать неточности или задержки. Это не финансовая рекомендация и не призыв к покупке. Транзакции подписываются исключительно твоим кошельком, на твой страх и риск. DeFi сопряжён с высоким риском полной потери средств, включая непостоянные потери и полное обесценивание токена. Проверяйте всё самостоятельно.</div>
 </div>
+
 <div class="ov" id="ov"><div class="modal">
   <span class="x" id="mx">✕</span><h2 id="m-sym">—</h2>
   <div class="dim" id="m-sub" style="font-size:13px;margin-top:2px"></div>
@@ -103,11 +158,19 @@
   </div>
   <canvas id="m-chart" height="150"></canvas>
   <div class="note" id="m-note"></div>
+  <div class="lp" id="m-lp"></div>
 </div></div>
+
 <script>
+/* ================= общие данные радара ================= */
 let POOLS=[],sortK='l1',sortDir=-1,filt='all',chart=null;
 const fmtUsd=n=>n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(0)+'k':'$'+n;
 const fmtAge=h=>h<24?h.toFixed(1)+'ч':h<720?(h/24).toFixed(0)+'д':(h/720).toFixed(0)+'мес';
+function s(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+function fmtN(x){if(!isFinite(x))return'—';const a=Math.abs(x);
+  if(a===0)return'0';if(a>=1000)return x.toLocaleString('ru-RU',{maximumFractionDigits:2});
+  if(a>=1)return x.toFixed(4).replace(/0+$/,'').replace(/\.$/,'');
+  return x.toPrecision(4);}
 function pass(d){if(filt==='perp')return d.perp;if(filt==='mature')return d.age>=24;
   if(filt==='stable')return d.quote==='USDT'||d.quote==='USDC';if(filt==='safe')return d.lvr>=5;return true;}
 function render(){
@@ -125,8 +188,158 @@ function render(){
       <td class="dim">${d.fee}</td><td class="${d.perp?'perp-y':'perp-n'}">${d.perp?'⚡ есть':'—'}</td></tr>`;}).join('');
   [...tb.querySelectorAll('tr[data-i]')].forEach(tr=>tr.onclick=()=>openPool(rows[+tr.dataset.i]));
 }
-function s(id,v){document.getElementById(id).textContent=v;}
+document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
+  if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=(k==='sym'||k==='dex')?1:-1;}
+  document.querySelectorAll('th .ar').forEach(a=>a.remove());
+  const ar=document.createElement('span');ar.className='ar';ar.textContent=sortDir<0?' ▼':' ▲';th.appendChild(ar);render();});
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filt=c.dataset.f;render();});
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');
+  const pos=t.dataset.t==='pos';
+  document.getElementById('sec-radar').classList.toggle('hide',pos);
+  document.getElementById('sec-pos').classList.toggle('hide',!pos);
+  if(pos)loadPositions();});
+function ago(ts){
+  if(!ts)return'';const m=Math.round((Date.now()/1000-ts)/60);
+  if(m<1)return' · только что';if(m<60)return' · '+m+' мин назад';
+  const h=Math.round(m/60);return h<24?' · '+h+' ч назад':' · '+Math.round(h/24)+' д назад';
+}
+async function load(){
+  try{const r=await (await fetch('./pools.json?t='+Date.now())).json();POOLS=r.pools;
+    s('live-txt',(r.updated||'—')+ago(r.updated_ts));render();}
+  catch(e){s('live-txt','данные загружаются…');}
+}
+
+/* ================= web3: константы ================= */
+const CHAIN_HEX='0x38';
+const RPCS=['https://bsc-rpc.publicnode.com','https://bsc-dataseed.binance.org','https://bsc.meowrpc.com','https://bsc-mainnet.public.blastapi.io'];
+const WBNB='0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
+const STABLES={'0x55d398326f99059ff775485246999027b3197955':1,'0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d':1,'0xe9e7cea3dedca5984780bafc599bd69add087d56':1};
+const DEXES={
+  pcs:{key:'pcs',name:'PancakeSwap v3',npm:'0x46A15B0b27311cedF172AB29E4f4766fbE7F4364',
+       factory:'0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865',
+       swap:(a,b)=>`https://pancakeswap.finance/swap?chain=bsc&inputCurrency=${a}&outputCurrency=${b}`,
+       pos:id=>`https://pancakeswap.finance/liquidity/${id}?chain=bsc`},
+  uni:{key:'uni',name:'Uniswap v3',npm:'0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613',
+       factory:'0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7',
+       swap:(a,b)=>`https://app.uniswap.org/swap?chain=bnb&inputCurrency=${a}&outputCurrency=${b}`,
+       pos:id=>`https://app.uniswap.org/pools/${id}?chain=bnb`}
+};
+function dexOf(tag){const t=(tag||'').toLowerCase();
+  if(t.startsWith('uni'))return DEXES.uni;
+  if(t.startsWith('pcs')&&t.includes('v3'))return DEXES.pcs;
+  return null;}
+const ERC20_ABI=['function symbol() view returns (string)','function decimals() view returns (uint8)',
+  'function balanceOf(address) view returns (uint256)','function allowance(address,address) view returns (uint256)',
+  'function approve(address,uint256) returns (bool)','function deposit() payable'];
+const NPM_ABI=['function balanceOf(address) view returns (uint256)',
+  'function tokenOfOwnerByIndex(address,uint256) view returns (uint256)',
+  'function positions(uint256) view returns (uint96 nonce,address operator,address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 fg0,uint256 fg1,uint128 tokensOwed0,uint128 tokensOwed1)',
+  'function mint((address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint256 amount0Desired,uint256 amount1Desired,uint256 amount0Min,uint256 amount1Min,address recipient,uint256 deadline)) payable returns (uint256 tokenId,uint128 liquidity,uint256 amount0,uint256 amount1)',
+  'function collect((uint256 tokenId,address recipient,uint128 amount0Max,uint128 amount1Max)) payable returns (uint256 amount0,uint256 amount1)',
+  'function decreaseLiquidity((uint256 tokenId,uint128 liquidity,uint256 amount0Min,uint256 amount1Min,uint256 deadline)) payable returns (uint256 amount0,uint256 amount1)',
+  'function multicall(bytes[] data) payable returns (bytes[])'];
+const FACTORY_ABI=['function getPool(address,address,uint24) view returns (address)'];
+const MAX128='0xffffffffffffffffffffffffffffffff';
+const MIN_TICK=-887272,MAX_TICK=887272;
+
+let ro=null,provider=null,signer=null,account=null;
+const tokCache={};
+
+function roProvider(){
+  if(!ro)ro=new ethers.providers.JsonRpcProvider(RPCS[0],56);
+  return ro;
+}
+async function tokenInfo(addr){
+  const a=addr.toLowerCase();
+  if(tokCache[a])return tokCache[a];
+  const c=new ethers.Contract(addr,ERC20_ABI,roProvider());
+  let sym='?',dec=18;
+  try{sym=await c.symbol();}catch(e){}
+  try{dec=await c.decimals();}catch(e){}
+  return tokCache[a]={addr,sym,dec:Number(dec)};
+}
+/* slot0 читаем «сырым» вызовом: у Pancake и Uniswap разные типы хвоста структуры */
+async function slot0(pool){
+  const hex=await roProvider().call({to:pool,data:'0x3850c7bd'});
+  const sqrt=ethers.BigNumber.from('0x'+hex.slice(2,66));
+  let t=BigInt('0x'+hex.slice(66,130));
+  if(t>=(1n<<255n))t-=(1n<<256n);
+  return {sqrtPriceX96:sqrt,tick:Number(t)};
+}
+async function poolMeta(pool){
+  const p=new ethers.Contract(pool,['function token0() view returns (address)','function token1() view returns (address)',
+    'function fee() view returns (uint24)','function tickSpacing() view returns (int24)'],roProvider());
+  const [t0,t1,fee,ts]=await Promise.all([p.token0(),p.token1(),p.fee(),p.tickSpacing()]);
+  return {t0,t1,fee:Number(fee),spacing:Number(ts)};
+}
+const sqrtAt=t=>Math.pow(1.0001,t/2);            // sqrt «сырой» цены token1/token0
+const tickAt=sq=>Math.log(sq*sq)/Math.log(1.0001);
+function alignDown(t,sp){return Math.max(MIN_TICK,Math.floor(t/sp)*sp);}
+function alignUp(t,sp){return Math.min(MAX_TICK,Math.ceil(t/sp)*sp);}
+/* количества токенов для ликвидности L при текущем sqrtP и границах sa..sb (всё «сырое») */
+function amountsFor(L,sp,sa,sb){
+  if(sp<=sa)return[L*(1/sa-1/sb),0];
+  if(sp>=sb)return[0,L*(sb-sa)];
+  return[L*(1/sp-1/sb),L*(sp-sa)];
+}
+function toUnits(x,dec){
+  if(!isFinite(x)||x<=0)return ethers.constants.Zero;
+  const s=x.toLocaleString('fullwide',{useGrouping:false,maximumFractionDigits:Math.min(dec,18)});
+  try{return ethers.utils.parseUnits(s,dec);}catch(e){return ethers.constants.Zero;}
+}
+const fromUnits=(bn,dec)=>parseFloat(ethers.utils.formatUnits(bn,dec));
+
+/* ================= подключение кошелька ================= */
+function shortAddr(a){return a.slice(0,6)+'…'+a.slice(-4);}
+function setWalletUI(){
+  const b=document.getElementById('wbtn');
+  b.textContent=account?shortAddr(account):'Подключить кошелёк';
+  b.className=account?'btn sec':'btn';
+}
+async function connect(){
+  if(!window.ethereum){
+    alert('EVM-кошелёк не найден. Установи MetaMask, Rabby или открой сайт во встроенном браузере кошелька.');
+    window.open('https://metamask.io/download/','_blank');return null;}
+  provider=new ethers.providers.Web3Provider(window.ethereum,'any');
+  await provider.send('eth_requestAccounts',[]);
+  const net=await provider.getNetwork();
+  if(net.chainId!==56){
+    try{await window.ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId:CHAIN_HEX}]});}
+    catch(e){
+      if(e&&(e.code===4902||e.code===-32603)){
+        await window.ethereum.request({method:'wallet_addEthereumChain',params:[{chainId:CHAIN_HEX,
+          chainName:'BNB Smart Chain',nativeCurrency:{name:'BNB',symbol:'BNB',decimals:18},
+          rpcUrls:['https://bsc-dataseed.binance.org'],blockExplorerUrls:['https://bscscan.com']}]});
+      }else{alert('Нужна сеть BNB Smart Chain (BSC).');return null;}
+    }
+    provider=new ethers.providers.Web3Provider(window.ethereum,'any');
+  }
+  signer=provider.getSigner();
+  account=await signer.getAddress();
+  setWalletUI();
+  if(window.ethereum.on){
+    window.ethereum.removeAllListeners&&window.ethereum.removeAllListeners('accountsChanged');
+    window.ethereum.on('accountsChanged',a=>{account=a&&a[0]?a[0]:null;setWalletUI();
+      if(!document.getElementById('sec-pos').classList.contains('hide'))loadPositions();
+      if(CUR)openPool(CUR);});
+    window.ethereum.on('chainChanged',()=>location.reload());
+  }
+  return account;
+}
+document.getElementById('wbtn').onclick=async()=>{
+  if(account){document.querySelector('.tab[data-t="pos"]').click();return;}
+  try{await connect();
+    if(!document.getElementById('sec-pos').classList.contains('hide'))loadPositions();
+    if(CUR)openPool(CUR);}
+  catch(e){console.warn(e);}
+};
+
+/* ================= карточка пула + открытие позиции ================= */
+let CUR=null,LP=null;
 function openPool(d){
+  CUR=d;
   s('m-sym',d.sym+' / '+d.quote);
   s('m-sub',`${d.dex} · TVL ${fmtUsd(d.tvl)} · возраст ${fmtAge(d.age)} · тир ${d.fee}% · перп ${d.perp?'есть ⚡':'нет'}`);
   s('m-l1',d.l1);s('m-l6',d.l6);s('m-lvr',d.lvr);
@@ -142,26 +355,341 @@ function openPool(d){
     datasets:[{data:h.map(x=>x.l1),borderColor:'#3ddc84',backgroundColor:'rgba(61,220,132,.12)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},
     options:{plugins:{legend:{display:false},title:{display:true,text:'Live yield %/день — история',color:'#7d84a0',font:{size:12}}},
       scales:{x:{ticks:{color:'#7d84a0',maxTicksLimit:6},grid:{color:'#232838'}},y:{ticks:{color:'#7d84a0'},grid:{color:'#232838'}}}}});
+  buildLP(d);
 }
-document.getElementById('mx').onclick=()=>document.getElementById('ov').classList.remove('show');
-document.getElementById('ov').onclick=e=>{if(e.target.id==='ov')e.target.classList.remove('show');};
-document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
-  if(sortK===k)sortDir*=-1;else{sortK=k;sortDir=(k==='sym'||k==='dex')?1:-1;}
-  document.querySelectorAll('th .ar').forEach(a=>a.remove());
-  const ar=document.createElement('span');ar.className='ar';ar.textContent=sortDir<0?' ▼':' ▲';th.appendChild(ar);render();});
-document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
-  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filt=c.dataset.f;render();});
-function ago(ts){
-  if(!ts)return'';const m=Math.round((Date.now()/1000-ts)/60);
-  if(m<1)return' · только что';if(m<60)return' · '+m+' мин назад';
-  const h=Math.round(m/60);return h<24?' · '+h+' ч назад':' · '+Math.round(h/24)+' д назад';
+document.getElementById('mx').onclick=()=>{document.getElementById('ov').classList.remove('show');CUR=null;};
+document.getElementById('ov').onclick=e=>{if(e.target.id==='ov'){e.target.classList.remove('show');CUR=null;}};
+
+function lpMsg(html,cls){const e=document.getElementById('lp-msg');if(e){e.className='msg '+(cls||'dim');e.innerHTML=html;}}
+
+async function buildLP(d){
+  const box=document.getElementById('m-lp');
+  const dex=dexOf(d.dex);
+  if(!dex){box.innerHTML='<h3>Открыть позицию</h3><div class="msg dim">Этот DEX пока не поддерживается для открытия позиции прямо здесь.</div>';return;}
+  box.innerHTML='<h3>Открыть позицию · '+dex.name+'</h3><div class="msg dim"><span class="spin"></span>читаю пул из блокчейна…</div>';
+  let meta,sl,i0,i1;
+  try{
+    meta=await poolMeta(d.addr);
+    [sl,i0,i1]=await Promise.all([slot0(d.addr),tokenInfo(meta.t0),tokenInfo(meta.t1)]);
+  }catch(e){box.innerHTML='<h3>Открыть позицию</h3><div class="msg red">Не удалось прочитать пул: '+(e.message||e)+'</div>';return;}
+  const spRaw=parseFloat(ethers.utils.formatUnits(sl.sqrtPriceX96,0))/Math.pow(2,96);
+  // отображаемая цена: сколько quote за 1 base
+  const baseIs0=(i0.sym.toUpperCase()===String(d.sym).toUpperCase())||
+                (!!STABLES[meta.t1.toLowerCase()]||meta.t1.toLowerCase()===WBNB.toLowerCase())&&
+                 !(!!STABLES[meta.t0.toLowerCase()]||meta.t0.toLowerCase()===WBNB.toLowerCase());
+  const base=baseIs0?i0:i1, quote=baseIs0?i1:i0;
+  const p0in1=spRaw*spRaw*Math.pow(10,i0.dec-i1.dec);   // цена token0 в token1 (человеческая)
+  const price=baseIs0?p0in1:1/p0in1;                     // quote за 1 base
+  LP={d,dex,meta,sl,i0,i1,base,quote,baseIs0,spRaw,price};
+
+  box.innerHTML=`<h3>Открыть позицию · ${dex.name}</h3>
+    <div class="lprow"><span class="k">Текущая цена</span><b>${fmtN(price)} ${quote.sym} за 1 ${base.sym}</b></div>
+    <div class="lprow"><span class="k">Комиссия пула</span><b>${d.fee}%</b></div>
+    <div class="lbl">Диапазон цены</div>
+    <div class="lprow"><span class="k">Нижняя граница</span><b id="lp-lot">−15%</b></div>
+    <input type="range" class="rng" id="lp-lo" min="1" max="90" step="1" value="15">
+    <div class="lprow"><span class="k">Верхняя граница</span><b id="lp-hit">+15%</b></div>
+    <input type="range" class="rng" id="lp-hi" min="1" max="300" step="1" value="15">
+    <div class="band" id="lp-band">…</div>
+    <div class="lbl">Сколько вложить (${quote.sym})</div>
+    <input type="text" id="lp-amt" inputmode="decimal" placeholder="0.0">
+    <div class="lprow"><span class="k">Баланс: <span id="lp-bal">—</span> ${quote.sym}</span>
+      <button class="btn sec sm" id="lp-max">Весь баланс</button></div>
+    <div class="band" id="lp-need">Введи сумму — посчитаю, сколько нужно второго токена.</div>
+    <div class="lbl">Допуск проскальзывания</div>
+    <select id="lp-slip"><option value="100">1%</option><option value="300">3%</option>
+      <option value="500" selected>5%</option><option value="1000">10%</option></select>
+    <div class="btns" id="lp-btns"></div>
+    <div class="msg dim" id="lp-msg"></div>`;
+
+  const lo=document.getElementById('lp-lo'),hi=document.getElementById('lp-hi');
+  lo.oninput=hi.oninput=()=>{s('lp-lot','−'+lo.value+'%');s('lp-hit','+'+hi.value+'%');recalc();};
+  document.getElementById('lp-amt').oninput=recalc;
+  document.getElementById('lp-slip').onchange=recalc;
+  document.getElementById('lp-max').onclick=async()=>{
+    if(!account){await connect();}
+    if(!account)return;
+    const c=new ethers.Contract(quote.addr,ERC20_ABI,roProvider());
+    const b=await c.balanceOf(account);
+    document.getElementById('lp-amt').value=String(fromUnits(b,quote.dec));recalc();};
+  recalc();
+  if(account)refreshBalances();
 }
-async function load(){
-  try{const r=await (await fetch('./pools.json?t='+Date.now())).json();POOLS=r.pools;
-    s('live-txt',(r.updated||'—')+ago(r.updated_ts));render();}
-  catch(e){s('live-txt','данные загружаются…');}
+
+function calcTicks(){
+  const {meta,i0,i1,baseIs0,price}=LP;
+  const lo=+document.getElementById('lp-lo').value, hi=+document.getElementById('lp-hi').value;
+  const pLoDisp=price*(1-lo/100), pHiDisp=price*(1+hi/100);
+  const toRaw=pd=>(baseIs0?pd:1/pd)*Math.pow(10,i1.dec-i0.dec);
+  let tA=tickAt(Math.sqrt(toRaw(pLoDisp))), tB=tickAt(Math.sqrt(toRaw(pHiDisp)));
+  let tl=Math.min(tA,tB), tu=Math.max(tA,tB);
+  tl=alignDown(tl,meta.spacing); tu=alignUp(tu,meta.spacing);
+  if(tu<=tl)tu=tl+meta.spacing;
+  return {tickLower:tl,tickUpper:tu};
 }
+function dispPriceAtTick(t){
+  const {i0,i1,baseIs0}=LP;
+  const p0in1=Math.pow(1.0001,t)*Math.pow(10,i0.dec-i1.dec);
+  return baseIs0?p0in1:1/p0in1;
+}
+function recalc(){
+  if(!LP)return;
+  const {i0,i1,base,quote,baseIs0,spRaw}=LP;
+  const {tickLower,tickUpper}=calcTicks();
+  const pa=dispPriceAtTick(tickLower),pb=dispPriceAtTick(tickUpper);
+  const lo=Math.min(pa,pb),hi=Math.max(pa,pb);
+  document.getElementById('lp-band').innerHTML=
+    `<b>${fmtN(lo)} — ${fmtN(hi)}</b> ${quote.sym} за 1 ${base.sym}<br>
+     <span class="dim">Комиссии капают, пока цена внутри этого коридора. Вышла за границу — позиция перестаёт зарабатывать и целиком превращается в один из двух токенов.</span>`;
+  const amtStr=(document.getElementById('lp-amt').value||'').replace(',','.');
+  const amt=parseFloat(amtStr);
+  const need=document.getElementById('lp-need');
+  LP.plan=null;
+  if(!isFinite(amt)||amt<=0){need.textContent='Введи сумму — посчитаю, сколько нужно второго токена.';renderLPButtons();return;}
+  const sa=sqrtAt(tickLower),sb=sqrtAt(tickUpper),sp=spRaw;
+  const quoteIs0=(quote===i0);
+  const qRaw=amt*Math.pow(10,quote.dec);
+  let L;
+  if(quoteIs0){ // задан amount0
+    L=sp<=sa?qRaw/(1/sa-1/sb):(sp>=sb?0:qRaw/(1/sp-1/sb));
+  }else{        // задан amount1
+    L=sp>=sb?qRaw/(sb-sa):(sp<=sa?0:qRaw/(sp-sa));
+  }
+  if(!isFinite(L)||L<=0){need.textContent='Диапазон некорректен, подвинь ползунки.';renderLPButtons();return;}
+  const [a0,a1]=amountsFor(L,sp,sa,sb);
+  const h0=a0/Math.pow(10,i0.dec), h1=a1/Math.pow(10,i1.dec);
+  LP.plan={tickLower,tickUpper,L,a0:h0,a1:h1};
+  const hb=baseIs0?h0:h1, hq=baseIs0?h1:h0;
+  need.innerHTML=`Понадобится: <b>${fmtN(hb)} ${base.sym}</b> + <b>${fmtN(hq)} ${quote.sym}</b>
+    <br><span class="dim">Позиция в v3 состоит из двух токенов. Если ${base.sym} на кошельке нет — его нужно сначала купить.</span>`;
+  renderLPButtons();
+  if(account)refreshBalances();
+}
+
+async function refreshBalances(){
+  if(!LP||!account)return;
+  const {i0,i1,quote}=LP;
+  try{
+    const c0=new ethers.Contract(i0.addr,ERC20_ABI,roProvider());
+    const c1=new ethers.Contract(i1.addr,ERC20_ABI,roProvider());
+    const [b0,b1]=await Promise.all([c0.balanceOf(account),c1.balanceOf(account)]);
+    LP.bal0=fromUnits(b0,i0.dec);LP.bal1=fromUnits(b1,i1.dec);
+    s('lp-bal',fmtN(quote===i0?LP.bal0:LP.bal1));
+    renderLPButtons();
+  }catch(e){}
+}
+
+function renderLPButtons(){
+  const box=document.getElementById('lp-btns');if(!box||!LP)return;
+  const {i0,i1,base,quote,dex,plan}=LP;
+  if(!account){box.innerHTML='<button class="btn" id="lp-conn">Подключить кошелёк</button>';
+    document.getElementById('lp-conn').onclick=async()=>{await connect();if(CUR)openPool(CUR);};return;}
+  if(!plan){box.innerHTML='<button class="btn" disabled>Открыть позицию</button>';return;}
+  let html='';
+  const short=[];
+  if(LP.bal0!==undefined){
+    if(LP.bal0<plan.a0*0.999)short.push(i0);
+    if(LP.bal1<plan.a1*0.999)short.push(i1);
+  }
+  short.forEach(t=>{
+    const other=t===i0?i1:i0;
+    if(t.addr.toLowerCase()===WBNB.toLowerCase())
+      html+=`<button class="btn sec" data-wrap="1">Обернуть BNB → WBNB</button>`;
+    else
+      html+=`<a class="btn sec" style="text-align:center;text-decoration:none;line-height:1.6" target="_blank" href="${dex.swap(other.addr,t.addr)}">Купить ${t.sym}</a>`;
+  });
+  html+=`<button class="btn go" id="lp-go">Открыть позицию</button>`;
+  box.innerHTML=html;
+  const w=box.querySelector('[data-wrap]');
+  if(w)w.onclick=wrapBnb;
+  const go=document.getElementById('lp-go');
+  if(go){
+    if(short.length){go.disabled=true;lpMsg('Не хватает токенов на балансе — докупи недостающее и обнови сумму.','msg amber');}
+    else lpMsg('');
+    go.onclick=doMint;
+  }
+}
+
+async function wrapBnb(){
+  try{
+    if(!signer)await connect();
+    const need=LP.quote.addr.toLowerCase()===WBNB.toLowerCase()?
+      (LP.quote===LP.i0?LP.plan.a0:LP.plan.a1):(LP.i0.addr.toLowerCase()===WBNB.toLowerCase()?LP.plan.a0:LP.plan.a1);
+    const v=toUnits(need*1.002,18);
+    lpMsg('<span class="spin"></span>подтверди обёртывание BNB в кошельке…');
+    const c=new ethers.Contract(WBNB,ERC20_ABI,signer);
+    const tx=await c.deposit({value:v});
+    lpMsg('<span class="spin"></span>жду подтверждения сети…');
+    await tx.wait();
+    lpMsg('BNB обёрнут в WBNB.','msg green');
+    await refreshBalances();
+  }catch(e){lpMsg(errText(e),'msg red');}
+}
+function errText(e){
+  const m=(e&&(e.data&&e.data.message||e.error&&e.error.message||e.reason||e.message))||String(e);
+  if(/user rejected|User denied/i.test(m))return 'Отменено в кошельке.';
+  return 'Ошибка: '+String(m).slice(0,220);
+}
+
+async function doMint(){
+  if(!LP||!LP.plan)return;
+  const go=document.getElementById('lp-go');
+  try{
+    if(!signer)await connect();
+    go.disabled=true;
+    const {meta,i0,i1,plan,dex}=LP;
+    const slip=+document.getElementById('lp-slip').value;
+    const a0=toUnits(plan.a0,i0.dec), a1=toUnits(plan.a1,i1.dec);
+    const npmAddr=dex.npm;
+    // approve при необходимости
+    for(const [t,amt] of [[i0,a0],[i1,a1]]){
+      if(amt.isZero())continue;
+      const c=new ethers.Contract(t.addr,ERC20_ABI,signer);
+      const cur=await c.allowance(account,npmAddr);
+      if(cur.lt(amt)){
+        lpMsg(`<span class="spin"></span>подтверди доступ к ${t.sym} в кошельке…`);
+        const tx=await c.approve(npmAddr,amt.mul(102).div(100));
+        lpMsg('<span class="spin"></span>жду подтверждения доступа…');
+        await tx.wait();
+      }
+    }
+    const npm=new ethers.Contract(npmAddr,NPM_ABI,signer);
+    const params={token0:meta.t0,token1:meta.t1,fee:meta.fee,
+      tickLower:plan.tickLower,tickUpper:plan.tickUpper,
+      amount0Desired:a0,amount1Desired:a1,
+      amount0Min:a0.mul(10000-slip).div(10000),amount1Min:a1.mul(10000-slip).div(10000),
+      recipient:account,deadline:Math.floor(Date.now()/1000)+1200};
+    lpMsg('<span class="spin"></span>оцениваю газ…');
+    let gas;
+    try{gas=await npm.estimateGas.mint(params);}
+    catch(e){lpMsg('Сеть отклонила транзакцию до отправки: '+errText(e)+
+      '<br>Обычно помогает больший допуск проскальзывания или чуть более широкий диапазон.','msg red');go.disabled=false;return;}
+    lpMsg('<span class="spin"></span>подтверди открытие позиции в кошельке…');
+    const tx=await npm.mint(params,{gasLimit:gas.mul(125).div(100)});
+    lpMsg(`<span class="spin"></span>транзакция отправлена, жду сеть… <a class="lnk" target="_blank" href="https://bscscan.com/tx/${tx.hash}">bscscan</a>`);
+    await tx.wait();
+    lpMsg(`Позиция открыта. <a class="lnk" target="_blank" href="https://bscscan.com/tx/${tx.hash}">транзакция</a> · она появится во вкладке «Мои позиции».`,'msg green');
+    go.disabled=false;
+    loadPositions();
+  }catch(e){lpMsg(errText(e),'msg red');if(go)go.disabled=false;}
+}
+
+/* ================= мои позиции ================= */
+let POSBUSY=false;
+async function loadPositions(){
+  const tb=document.getElementById('ptb');
+  if(!account){tb.innerHTML='<tr><td colspan="8" class="empty">Подключи кошелёк, чтобы увидеть свои LP-позиции.</td></tr>';return;}
+  if(POSBUSY)return;POSBUSY=true;
+  s('pos-status','читаю блокчейн…');
+  tb.innerHTML='<tr><td colspan="8" class="empty"><span class="spin"></span>читаю позиции из блокчейна…</td></tr>';
+  const out=[];
+  try{
+    for(const dex of [DEXES.uni,DEXES.pcs]){
+      const npm=new ethers.Contract(dex.npm,NPM_ABI,roProvider());
+      let n=0;
+      try{n=(await npm.balanceOf(account)).toNumber();}catch(e){continue;}
+      const ids=[];
+      for(let i=0;i<Math.min(n,60);i++)ids.push(npm.tokenOfOwnerByIndex(account,i).catch(()=>null));
+      const idList=(await Promise.all(ids)).filter(Boolean);
+      for(const id of idList){
+        try{
+          const p=await npm.positions(id);
+          const liq=p.liquidity;
+          if(liq.isZero()&&p.tokensOwed0.isZero()&&p.tokensOwed1.isZero())continue;
+          out.push({dex,id,p});
+        }catch(e){}
+      }
+    }
+    if(!out.length){tb.innerHTML='<tr><td colspan="8" class="empty">Открытых LP-позиций не найдено.</td></tr>';
+      s('pos-status','');POSBUSY=false;return;}
+    const rows=await Promise.all(out.map(o=>describePos(o)));
+    tb.innerHTML=rows.map(r=>r.html).join('');
+    rows.forEach(r=>{
+      const b1=document.getElementById('col-'+r.id);if(b1)b1.onclick=()=>collectFees(r);
+      const b2=document.getElementById('cls-'+r.id);if(b2)b2.onclick=()=>closePos(r);
+    });
+    s('pos-status',rows.length+' позиц.');
+  }catch(e){tb.innerHTML='<tr><td colspan="8" class="empty red">'+errText(e)+'</td></tr>';}
+  POSBUSY=false;
+}
+async function describePos(o){
+  const {dex,id,p}=o;
+  const [i0,i1]=await Promise.all([tokenInfo(p.token0),tokenInfo(p.token1)]);
+  const fac=new ethers.Contract(dex.factory,FACTORY_ABI,roProvider());
+  const pool=await fac.getPool(p.token0,p.token1,p.fee);
+  let sl=null;try{sl=await slot0(pool);}catch(e){}
+  const sp=sl?parseFloat(ethers.utils.formatUnits(sl.sqrtPriceX96,0))/Math.pow(2,96):0;
+  const sa=sqrtAt(p.tickLower),sb=sqrtAt(p.tickUpper);
+  const L=parseFloat(p.liquidity.toString());
+  const [a0,a1]=amountsFor(L,sp,sa,sb);
+  const h0=a0/Math.pow(10,i0.dec),h1=a1/Math.pow(10,i1.dec);
+  const inRange=sl?(sl.tick>=p.tickLower&&sl.tick<p.tickUpper):false;
+  // некоторые стейблы/WBNB считаем «котировкой» для читаемого отображения цены
+  const quoteIs1=!!STABLES[p.token1.toLowerCase()]||p.token1.toLowerCase()===WBNB.toLowerCase();
+  const dp=t=>{const v=Math.pow(1.0001,t)*Math.pow(10,i0.dec-i1.dec);return quoteIs1?v:1/v;};
+  const pa=dp(p.tickLower),pb=dp(p.tickUpper);
+  const lo=Math.min(pa,pb),hi=Math.max(pa,pb);
+  const bs=quoteIs1?i0:i1, qs=quoteIs1?i1:i0;
+  // несобранные комиссии — статический вызов collect
+  let f0=fromUnits(p.tokensOwed0,i0.dec),f1=fromUnits(p.tokensOwed1,i1.dec);
+  try{
+    const npm=new ethers.Contract(dex.npm,NPM_ABI,roProvider());
+    const r=await npm.callStatic.collect({tokenId:id,recipient:account,amount0Max:MAX128,amount1Max:MAX128},{from:account});
+    f0=fromUnits(r.amount0,i0.dec);f1=fromUnits(r.amount1,i1.dec);
+  }catch(e){}
+  const idS=id.toString();
+  const html=`<tr>
+    <td><span class="sym">${bs.sym}</span> <span class="pair">/${qs.sym}</span>
+        <a class="pair lnk" target="_blank" href="${dex.pos(idS)}">#${idS}</a></td>
+    <td><span class="pill ${dex.key==='uni'?'p-uni':'p-pcs'}">${dex.key==='uni'?'uni':'pcs-v3'}</span></td>
+    <td class="dim">${(p.fee/10000).toString()}</td>
+    <td>${fmtN(lo)} — ${fmtN(hi)}</td>
+    <td><span class="pill ${inRange?'p-in':'p-out'}">${inRange?'в диапазоне':'вне'}</span></td>
+    <td>${fmtN(h0)} ${i0.sym}<br><span class="dim">${fmtN(h1)} ${i1.sym}</span></td>
+    <td class="${(f0+f1)>0?'green':'dim'}">${fmtN(f0)} ${i0.sym}<br>${fmtN(f1)} ${i1.sym}</td>
+    <td><button class="btn sec sm" id="col-${idS}">Собрать</button>
+        <button class="btn sec sm" id="cls-${idS}">Закрыть</button></td></tr>`;
+  return {html,id:idS,tokenId:id,dex,p,i0,i1};
+}
+async function collectFees(r){
+  try{
+    if(!signer)await connect();
+    const npm=new ethers.Contract(r.dex.npm,NPM_ABI,signer);
+    s('pos-status','подтверди сбор комиссий в кошельке…');
+    const tx=await npm.collect({tokenId:r.tokenId,recipient:account,amount0Max:MAX128,amount1Max:MAX128});
+    s('pos-status','жду сеть…');await tx.wait();
+    s('pos-status','комиссии собраны');loadPositions();
+  }catch(e){s('pos-status',errText(e));}
+}
+async function closePos(r){
+  if(!confirm('Закрыть позицию целиком? Ликвидность и накопленные комиссии вернутся на кошелёк.'))return;
+  try{
+    if(!signer)await connect();
+    const npm=new ethers.Contract(r.dex.npm,NPM_ABI,signer);
+    const iface=npm.interface;
+    const dl=Math.floor(Date.now()/1000)+1200;
+    const calls=[];
+    if(!r.p.liquidity.isZero())
+      calls.push(iface.encodeFunctionData('decreaseLiquidity',[{tokenId:r.tokenId,liquidity:r.p.liquidity,amount0Min:0,amount1Min:0,deadline:dl}]));
+    calls.push(iface.encodeFunctionData('collect',[{tokenId:r.tokenId,recipient:account,amount0Max:MAX128,amount1Max:MAX128}]));
+    s('pos-status','подтверди закрытие в кошельке…');
+    const tx=await npm.multicall(calls);
+    s('pos-status','жду сеть…');await tx.wait();
+    s('pos-status','позиция закрыта');loadPositions();
+  }catch(e){s('pos-status',errText(e));}
+}
+document.getElementById('pos-refresh').onclick=loadPositions;
+
+/* ================= старт ================= */
 load();setInterval(load,60000);
+(async()=>{ // тихое переподключение, если кошелёк уже авторизован
+  try{
+    if(window.ethereum){
+      const acc=await window.ethereum.request({method:'eth_accounts'});
+      if(acc&&acc.length){await connect();}
+    }
+  }catch(e){}
+})();
 </script>
 </body>
 </html>
