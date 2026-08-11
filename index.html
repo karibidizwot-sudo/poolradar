@@ -305,26 +305,26 @@ const fromUnits=(bn,dec)=>parseFloat(ethers.utils.formatUnits(bn,dec));
 /* ---- цены в долларах (DexScreener, публичный API) ---- */
 const pxCache={};
 async function usdPrices(addrs){
+  // запрашиваем строго по одному токену: мультизапрос отдаёт максимум 30 пар на всех
+  // и токены вытесняют друг друга — часть цен молча терялась
   const need=[...new Set(addrs.map(a=>a.toLowerCase()))].filter(a=>!(a in pxCache));
-  for(let i=0;i<need.length;i+=25){
-    const chunk=need.slice(i,i+25);
+  const one=async a=>{
     try{
-      const r=await (await fetch('https://api.dexscreener.com/latest/dex/tokens/'+chunk.join(','))).json();
-      const best={};
+      const r=await (await fetch('https://api.dexscreener.com/latest/dex/tokens/'+a)).json();
+      let best=null;
       (r.pairs||[]).forEach(p=>{
         if(p.chainId!=='bsc'||!p.priceUsd)return;
         const liq=(p.liquidity&&p.liquidity.usd)||0;
-        [[p.baseToken,parseFloat(p.priceUsd)],
-         [p.quoteToken,p.priceNative?parseFloat(p.priceUsd)/parseFloat(p.priceNative):null]]
-        .forEach(([t,px])=>{
-          if(!t||!px||!isFinite(px))return;
-          const k=(t.address||'').toLowerCase();
-          if(!best[k]||best[k].liq<liq)best[k]={liq,px};
-        });
+        let px=null;
+        if((p.baseToken.address||'').toLowerCase()===a)px=parseFloat(p.priceUsd);
+        else if((p.quoteToken.address||'').toLowerCase()===a&&p.priceNative&&+p.priceNative>0)
+          px=parseFloat(p.priceUsd)/parseFloat(p.priceNative);
+        if(px&&isFinite(px)&&(!best||best.liq<liq))best={liq,px};
       });
-      chunk.forEach(a=>{pxCache[a]=best[a]?best[a].px:null;});
-    }catch(e){chunk.forEach(a=>{pxCache[a]=null;});}
-  }
+      pxCache[a]=best?best.px:null;
+    }catch(e){pxCache[a]=null;}
+  };
+  for(let i=0;i<need.length;i+=5)await Promise.all(need.slice(i,i+5).map(one));
   return pxCache;
 }
 const usdOf=(a,amt)=>{const p=pxCache[(a||'').toLowerCase()];return (p&&isFinite(p))?p*amt:null;};
